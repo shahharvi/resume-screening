@@ -1,0 +1,9 @@
+flask
+streamlit
+pymupdf
+scikit-learn
+pandas
+numpy
+tqdm
+sentence-transformers
+torch
