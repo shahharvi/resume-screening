@@ -33,8 +33,8 @@ A smart resume ranking system that uses NLP and ML techniques to screen multiple
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/resume-screening-system.git
-cd resume-screening-system
+git clone https://github.com/your-username/resume-screening.git
+cd resume-screening
 
 # Create a virtual environment (optional but recommended)
 python -m venv venv
@@ -42,4 +42,5 @@ venv\Scripts\activate    # For Windows
 
 # Install dependencies
 pip install -r requirements.txt
-
+python app.py
+streamlit run streamlit_app.py
