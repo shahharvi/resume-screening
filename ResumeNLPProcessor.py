@@ -1,49 +1,52 @@
-import re
+# backend/ResumeNLPProcessor.py
+
 import numpy as np
+import pandas as pd
 import joblib
+from transformers import BertTokenizer, BertModel
+import torch
 from sklearn.metrics.pairwise import cosine_similarity
-from sentence_transformers import SentenceTransformer
 
 class ResumeNLPProcessor:
-    def __init__(self, resumes, filenames):
+    def __init__(self, resumes):
         self.resumes = resumes
-        self.filenames = filenames
+        self.df = pd.DataFrame({"ResumeText": resumes})
+        self.df.fillna("", inplace=True)
+
+        # Load TF-IDF
         self.tfidf = joblib.load("saved_models/tfidf_vectorizer.pkl")
-        self.model = joblib.load("saved_models/classifier_model.pkl")
-        self.encoder = joblib.load("saved_models/label_encoder.pkl")
-        self.bert_model = SentenceTransformer("all-MiniLM-L6-v2")
 
-        self.cleaned_resumes = [self._clean_text(r) for r in resumes]
-        self.tfidf_vectors = self.tfidf.transform(self.cleaned_resumes)
-        self.bert_vectors = self.bert_model.encode(resumes)
+        # Load BERT
+        self.bert_tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
+        self.bert_model = BertModel.from_pretrained("bert-base-uncased")
+        self.bert_model.eval()
 
-    def _clean_text(self, text):
-        text = text.lower()
-        text = re.sub(r"[^a-zA-Z\s]", " ", text)
-        text = re.sub(r"\s+", " ", text)
-        return text.strip()
+        # Precompute vectors
+        self.tfidf_vectors = self.tfidf.transform(self.df["ResumeText"])
+        self.bert_vectors = np.vstack([self.get_bert_vector(text) for text in self.df["ResumeText"]])
+
+    def get_bert_vector(self, text):
+        inputs = self.bert_tokenizer(text, return_tensors="pt", truncation=True, padding=True, max_length=512)
+        with torch.no_grad():
+            outputs = self.bert_model(**inputs)
+        return outputs.last_hidden_state[:, 0, :].numpy().flatten()
 
     def rank_resumes(self, job_description, method="tfidf", top_k=5):
-        job_clean = self._clean_text(job_description)
-
         if method == "tfidf":
-            job_vec = self.tfidf.transform([job_clean])
-            similarities = cosine_similarity(job_vec, self.tfidf_vectors).flatten()
+            jd_vec = self.tfidf.transform([job_description])
+            sims = cosine_similarity(jd_vec, self.tfidf_vectors).flatten()
         elif method == "bert":
-            job_vec = self.bert_model.encode([job_clean])[0]
-            similarities = cosine_similarity([job_vec], self.bert_vectors).flatten()
+            jd_vec = self.get_bert_vector(job_description)
+            sims = cosine_similarity([jd_vec], self.bert_vectors).flatten()
         else:
-            raise ValueError("Invalid method. Use 'tfidf' or 'bert'.")
+            raise ValueError("Method must be 'tfidf' or 'bert'")
 
-        top_indices = similarities.argsort()[::-1][:top_k]
-        results = []
-        for i in top_indices:
-            clean_text = self.cleaned_resumes[i]
-            pred = self.model.predict(self.tfidf.transform([clean_text]))[0]
-            target = self.encoder.inverse_transform([pred])[0]
-            results.append({
-                "Filename": self.filenames[i],
-                "Similarity_Score": float(round(similarities[i], 4)),
-                "Predicted_Domain": target
-            })
-        return results
+        top_indices = sims.argsort()[::-1][:top_k]
+        return [
+            {
+                "Rank": i + 1,
+                "ResumeIndex": int(idx),
+                "SimilarityScore": float(sims[idx])
+            }
+            for i, idx in enumerate(top_indices)
+        ]

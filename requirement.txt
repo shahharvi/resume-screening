@@ -7,3 +7,5 @@ numpy
 tqdm
 sentence-transformers
 torch
+transformers
+joblib
