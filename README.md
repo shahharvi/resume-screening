@@ -25,7 +25,7 @@ A smart resume ranking system that uses NLP and ML techniques to screen multiple
 | Backend      | Flask                              |
 | NLP Models   | TF-IDF, BERT (HuggingFace)         |
 | ML           | Logistic Regression                |
-| Libraries    | scikit-learn, sentence-transformers, pandas, NumPy, PyMuPDF |
+| Libraries    | scikit-learn, transformers, pandas, NumPy, PyMuPDF |
 
 ---
 
