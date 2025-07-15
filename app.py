@@ -1,35 +1,34 @@
-# app.py
-
 from flask import Flask, request, jsonify
 from ResumeNLPProcessor import ResumeNLPProcessor
+import fitz  # PyMuPDF
 
 app = Flask(__name__)
+processor = ResumeNLPProcessor()
+uploaded_files = []
 
-processor = None
-resumes = []
-filenames = []
+def extract_text_from_pdf(file_stream):
+    text = ""
+    with fitz.open(stream=file_stream, filetype="pdf") as doc:
+        for page in doc:
+            text += page.get_text()
+    return text
 
 @app.route("/upload", methods=["POST"])
-def upload():
-    global resumes, processor, filenames
-    files = request.files.getlist("files")
-    resumes = [f.read().decode("utf-8", errors="ignore") for f in files]
-    filenames = [f.filename for f in files]
-    processor = ResumeNLPProcessor(resumes)
-    return jsonify({"message": f"{len(resumes)} resumes uploaded."}), 200
+def upload_resumes():
+    global uploaded_files
+    uploaded_files = request.files.getlist("files")
+    texts = [extract_text_from_pdf(f.read()) for f in uploaded_files]
+    processor.set_resumes(texts, [f.filename for f in uploaded_files])
+    return jsonify({"message": f"{len(uploaded_files)} resumes processed."}), 200
 
 @app.route("/rank", methods=["POST"])
 def rank():
-    global processor, filenames
-    if processor is None:
-        return jsonify({"error": "Resumes not uploaded yet."}), 400
     data = request.get_json()
     jd = data.get("job_description", "")
     method = data.get("method", "tfidf")
     top_k = int(data.get("top_k", 5))
-    results = processor.rank_resumes(jd, method, top_k)
-    for r in results:
-        r["Filename"] = filenames[r["ResumeIndex"]]
+
+    results = processor.rank_resumes(jd, method=method, top_k=top_k)
     return jsonify(results), 200
 
 if __name__ == "__main__":

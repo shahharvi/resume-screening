@@ -1,52 +1,61 @@
-# backend/ResumeNLPProcessor.py
-
 import numpy as np
-import pandas as pd
-import joblib
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 from transformers import BertTokenizer, BertModel
 import torch
-from sklearn.metrics.pairwise import cosine_similarity
+import joblib
 
 class ResumeNLPProcessor:
-    def __init__(self, resumes):
-        self.resumes = resumes
-        self.df = pd.DataFrame({"ResumeText": resumes})
-        self.df.fillna("", inplace=True)
-
-        # Load TF-IDF
+    def __init__(self):
         self.tfidf = joblib.load("saved_models/tfidf_vectorizer.pkl")
+        self.model = joblib.load("saved_models/classifier_model.pkl")
+        self.label_encoder = joblib.load("saved_models/label_encoder.pkl")
 
-        # Load BERT
         self.bert_tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
         self.bert_model = BertModel.from_pretrained("bert-base-uncased")
         self.bert_model.eval()
 
-        # Precompute vectors
-        self.tfidf_vectors = self.tfidf.transform(self.df["ResumeText"])
-        self.bert_vectors = np.vstack([self.get_bert_vector(text) for text in self.df["ResumeText"]])
+        self.resume_texts = []
+        self.filenames = []
 
-    def get_bert_vector(self, text):
-        inputs = self.bert_tokenizer(text, return_tensors="pt", truncation=True, padding=True, max_length=512)
+    def set_resumes(self, texts, filenames):
+        self.resume_texts = texts
+        self.filenames = filenames
+
+    def _get_bert_embedding(self, text):
+        inputs = self.bert_tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
         with torch.no_grad():
             outputs = self.bert_model(**inputs)
         return outputs.last_hidden_state[:, 0, :].numpy().flatten()
 
     def rank_resumes(self, job_description, method="tfidf", top_k=5):
-        if method == "tfidf":
-            jd_vec = self.tfidf.transform([job_description])
-            sims = cosine_similarity(jd_vec, self.tfidf_vectors).flatten()
-        elif method == "bert":
-            jd_vec = self.get_bert_vector(job_description)
-            sims = cosine_similarity([jd_vec], self.bert_vectors).flatten()
-        else:
-            raise ValueError("Method must be 'tfidf' or 'bert'")
+        job_text = job_description.strip()
+        results = []
 
-        top_indices = sims.argsort()[::-1][:top_k]
-        return [
-            {
-                "Rank": i + 1,
-                "ResumeIndex": int(idx),
-                "SimilarityScore": float(sims[idx])
-            }
-            for i, idx in enumerate(top_indices)
-        ]
+        if method == "tfidf":
+            all_texts = [job_text] + self.resume_texts
+            vectors = self.tfidf.transform(all_texts).toarray()
+            jd_vec, resume_vecs = vectors[0], vectors[1:]
+        elif method == "bert":
+            jd_vec = self._get_bert_embedding(job_text)
+            resume_vecs = [self._get_bert_embedding(text) for text in self.resume_texts]
+        else:
+            return []
+
+        sims = cosine_similarity([jd_vec], resume_vecs).flatten()
+
+        # Predict roles
+        tfidf_resume_vecs = self.tfidf.transform(self.resume_texts)
+        predictions = self.model.predict(tfidf_resume_vecs)
+        predicted_labels = self.label_encoder.inverse_transform(predictions)
+
+        for i in range(len(self.resume_texts)):
+            results.append({
+                "Filename": self.filenames[i],
+                "Predicted_Label": predicted_labels[i],
+                "Similarity_Score": float(sims[i])
+            })
+
+        # Return top K
+        results.sort(key=lambda x: x["Similarity_Score"], reverse=True)
+        return results[:top_k]
